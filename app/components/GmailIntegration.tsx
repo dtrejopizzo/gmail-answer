@@ -6,11 +6,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from 'react-toastify'
 import { draftResponses } from '../actions'
 
-export default function GmailIntegration() {
+interface GmailIntegrationProps {
+  onDraftResponses: (responses: { [key: string]: string }) => void
+  isConnected: boolean
+  setIsConnected: (connected: boolean) => void
+}
+
+export default function GmailIntegration({ onDraftResponses, isConnected, setIsConnected }: GmailIntegrationProps) {
   const [isLoading, setIsLoading] = useState(false)
-  const [accessToken, setAccessToken] = useState('')
 
   const handleConnect = async () => {
+    setIsLoading(true)
     try {
       const result = await fetch('/api/gmail/auth', { method: 'POST' })
       const data = await result.json()
@@ -20,41 +26,28 @@ export default function GmailIntegration() {
     } catch (error) {
       console.error('Failed to initiate Gmail authentication:', error)
       toast.error('Failed to connect to Gmail')
-    }
-  }
-
-  const fetchAccessToken = async () => {
-    setIsLoading(true)
-    try {
-      const result = await fetch('/api/gmail/token')
-      const data = await result.json()
-      if (data.accessToken) {
-        setAccessToken(data.accessToken)
-        toast.success('Successfully fetched access token')
-      } else {
-        toast.error('Failed to fetch access token')
-      }
-    } catch (error) {
-      console.error('Failed to fetch access token:', error)
-      toast.error('Failed to fetch access token')
     } finally {
       setIsLoading(false)
     }
   }
 
   const handleDraftResponses = async () => {
+    if (!isConnected) {
+      toast.error('Please connect to Gmail first')
+      return
+    }
     setIsLoading(true)
     try {
-      const result = await draftResponses(accessToken)
+      const result = await draftResponses()
       if (result.success) {
-        const successCount = result.results.filter(r => r.success).length
+        const successCount = Object.keys(result.responses).length
         toast.success(`Created ${successCount} draft response${successCount !== 1 ? 's' : ''} in Gmail inbox threads`)
       } else {
-        toast.error('Failed to create draft responses in Gmail')
+        toast.error(`Failed to create draft responses in Gmail: ${result.error}`)
       }
     } catch (error) {
       console.error('Error drafting responses:', error)
-      toast.error('An error occurred while creating draft responses in Gmail')
+      toast.error(`An error occurred while creating draft responses in Gmail: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setIsLoading(false)
     }
@@ -66,15 +59,12 @@ export default function GmailIntegration() {
         <CardTitle>Gmail Integration</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Button onClick={handleConnect}>Connect to Gmail</Button>
-        <Button onClick={fetchAccessToken} disabled={isLoading}>
-          {isLoading ? 'Fetching...' : 'Fetch Access Token'}
+        <Button onClick={handleConnect} disabled={isLoading}>
+          {isConnected ? 'Reconnect to Gmail' : 'Connect to Gmail'}
         </Button>
-        {accessToken && (
-          <Button onClick={handleDraftResponses} disabled={isLoading}>
-            {isLoading ? 'Creating Drafts...' : 'Create Draft Responses in Inbox Threads'}
-          </Button>
-        )}
+        <Button onClick={handleDraftResponses} disabled={isLoading || !isConnected}>
+          {isLoading ? 'Creating Drafts...' : 'Create Draft Responses in Inbox Threads'}
+        </Button>
       </CardContent>
     </Card>
   )

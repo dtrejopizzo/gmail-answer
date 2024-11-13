@@ -19,7 +19,7 @@ export async function GET() {
   try {
     const res = await gmail.users.messages.list({
       userId: 'me',
-      maxResults: 3,
+      maxResults: 10,
     })
 
     const messages = await Promise.all(

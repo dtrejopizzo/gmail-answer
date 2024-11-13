@@ -4,6 +4,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import OpenAI from 'openai'
 import { google } from 'googleapis'
+import { cookies } from 'next/headers'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -19,10 +20,7 @@ const oauth2Client = new google.auth.OAuth2(
 
 export async function addExample(example: string) {
   try {
-    let content = await fs.readFile(EXAMPLES_FILE, 'utf-8').catch(() => '')
-    const exampleNumber = (content.split('\n\n').length + 1) / 2
-    const newExample = `Example email number ${exampleNumber}:\n${example}\n\n`
-    await fs.appendFile(EXAMPLES_FILE, newExample)
+    await fs.appendFile(EXAMPLES_FILE, example + '\n\n')
     return { success: true }
   } catch (error) {
     console.error('Error adding example:', error)
@@ -49,7 +47,7 @@ export async function generateResponse(incomingEmail: string) {
       messages: [{ role: "user", content: prompt }],
     })
 
-    const response = completion.choices[0].message.content.trim()
+    const response = completion.choices[0].message.content?.trim() || ''
     return { success: true, response }
   } catch (error) {
     console.error('Error generating response:', error)
@@ -57,18 +55,25 @@ export async function generateResponse(incomingEmail: string) {
   }
 }
 
-export async function draftResponses(accessToken: string) {
+export async function draftResponses() {
   try {
+    const cookieStore = await cookies()
+    const accessTokenCookie = cookieStore.get('gmail_access_token')
+    const accessToken = accessTokenCookie?.value
+
+    if (!accessToken) {
+      return { success: false, responses: {}, error: 'Invalid Credentials' }
+    }
+
     oauth2Client.setCredentials({ access_token: accessToken })
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client })
     const examples = await fs.readFile(EXAMPLES_FILE, 'utf-8').catch(() => '')
-    const results: { id: string; success: boolean }[] = []
+    const responses: { [key: string]: string } = {}
 
-    // Fetch emails from the inbox
     const res = await gmail.users.messages.list({
       userId: 'me',
       labelIds: ['INBOX'],
-      maxResults: 100, // Adjust this number as needed
+      maxResults: 100,
     })
 
     const messages = res.data.messages || []
@@ -91,7 +96,6 @@ export async function draftResponses(accessToken: string) {
         const subject = subjectHeader?.value || ''
         const snippet = fullMessage.data.snippet || ''
 
-        // Skip automatic emails from Luma
         if (from.toLowerCase().includes('luma') && subject.toLowerCase().includes('automatic')) {
           console.log(`Skipping automatic Luma email: ${subject}`)
           continue
@@ -115,10 +119,9 @@ export async function draftResponses(accessToken: string) {
           messages: [{ role: "user", content: prompt }],
         })
 
-        const response = completion.choices[0].message.content.trim()
+        const response = completion.choices[0].message.content?.trim() || ''
 
-        // Create a draft reply in the same thread
-        const draft = await gmail.users.drafts.create({
+        await gmail.users.drafts.create({
           userId: 'me',
           requestBody: {
             message: {
@@ -135,16 +138,15 @@ ${response}`
             }
           }
         })
-        results.push({ id: message.id!, success: true })
+        responses[message.id!] = response
       } catch (error) {
         console.error(`Error creating draft for email ${message.id}:`, error)
-        results.push({ id: message.id!, success: false })
       }
     }
 
-    return { success: true, results }
+    return { success: true, responses }
   } catch (error) {
     console.error('Error drafting responses:', error)
-    return { success: false, results: [] }
+    return { success: false, responses: {}, error: 'Failed to draft responses' }
   }
 }

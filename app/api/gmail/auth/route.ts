@@ -1,5 +1,6 @@
 import { google } from 'googleapis'
 import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -15,7 +16,7 @@ const SCOPES = [
 
 export async function POST() {
   const authUrl = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
+    access_type: 'online',
     scope: SCOPES,
     prompt: 'consent'
   })
@@ -30,20 +31,27 @@ export async function GET(request: Request) {
   if (code) {
     try {
       const { tokens } = await oauth2Client.getToken(code)
-      oauth2Client.setCredentials(tokens)
+      
+      if (tokens.access_token) {
+        // Store the access token in a secure HTTP-only cookie
+        const cookieStore = await cookies()
+        await cookieStore.set('gmail_access_token', tokens.access_token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          maxAge: 3600 // 1 hour
+        })
 
-      // In a production environment, you should securely store these tokens
-      // associated with the user's session or in a database
-      // For this example, we'll store them in memory (not recommended for production)
-      global.tokens = tokens
-
-      // Redirect to the main application page after successful authentication
-      return NextResponse.redirect(new URL('/', request.url))
+        // Redirect to the main application page
+        return NextResponse.redirect(new URL('/?connected=true', request.url))
+      } else {
+        throw new Error('No access token received')
+      }
     } catch (error) {
       console.error('Error exchanging code for tokens:', error)
-      return NextResponse.json({ error: 'Authentication failed' }, { status: 500 })
+      return NextResponse.redirect(new URL('/?error=auth_failed', request.url))
     }
   }
 
-  return NextResponse.json({ error: 'No code provided' }, { status: 400 })
+  return NextResponse.redirect(new URL('/?error=no_code', request.url))
 }
